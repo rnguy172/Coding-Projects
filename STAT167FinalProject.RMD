@@ -1,0 +1,449 @@
+---
+title: "Determining Factors That Impact Flight Departure Delay"
+author: 
+  - Jazmyne Patlan
+  - Sai Shrinidi Krishnan 
+  - Roxana Nguyen
+  - Iswarya Dinesh Kumar 
+  - Carolyn Hsu 
+  - Carl Luis Ortiz
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, collapse = TRUE)
+```
+
+```{r, eval=F, echo = FALSE}
+#Packages 
+
+install.packages("tidyverse")
+
+install.packages("GGally")
+
+install.packages("nycflights13")
+```
+
+```{r, include=FALSE}
+# Libraries
+
+library(nycflights13)   # for data set 
+library(tidyverse)      # for ggplot2 and dplyr  
+library(lubridate)      # for dates and times
+library(MASS)           # for `stepAIC()` function 
+library(boot)           # for `cv.glm` function
+library(GGally)         # for `ggpairs` function
+library(corrplot)       # for corrplot functions
+```
+
+# Introduction and Project Description
+
+## Background:
+
+Air travel is a mode of transportation that has been largely increasing over the years. According to crp.trb.org - Air Service Development and Regional Economic Activity, the passenger revenue from airlines just in the U.S. increased from 677 million (2000) to 931 million (2019). Over time, U.S. passenger traffic on airlines has significantly increased, bringing its own problems and inconveniences, such as flight delays. 
+
+## Objectives:
+Our project goal is to determine which variables have a statistically significant impact on the likelihood of a flight being delayed in the New York City area. Some of the specific factors that we are analyzing in this project are weather conditions, time of year, airlines, airport locations, and more. By using various EDA techniques and applying different regression models to see if we can predict if a flight will be delayed based on each variable, we will be able to pinpoint areas of improvement for travel in the New York City Area. 
+
+ This data frame contains all 336,776 flights that departed from New York City in 2013.
+
+## Research Questions:
+
+The following are our coherent research sub-questions, with the bolded ones being the ones we focused on specifically: 
+
+1. **How did the weather impact the number of flights departing from NYC-area airports in 2013?**
+2. Are some plane models more prone to delays than others?
+3. Does the age of an aircraft impact its departure time?
+4. Does an airport location (such as JFK) influence the likelihood of flight delays?
+5. **Does distance between airports affect departure delays?**
+6. **Do seasonal patterns (month/year/season) play a role in airport delays?**
+7. **Are some airlines more prone to delays than others?**
+8. Are specific destinations more prone to delays?
+9. **Which variables influence the likelihood of there not being a delay?** 
+10. How does the economy affect flight delays?
+
+## Hypothesis 
+
+- Precipitation and wind speeds are the weather predictors that most negatively impact departure delay. 
+- Flights with longer distances between airports will be more prone to departure delays. 
+- Seasons with harsher weather conditions (Summer and Winter) will negatively impact departure delay. 
+- More infamous airlines with low reviews (such as Frontier Airlines Inc.) are more prone to delays than the reputable airlines (such as United Air Lines Inc.)
+- Variables that influence the likelihood of there not being a delay include Fall and Spring seasons (seasons with less traveling), reputable airline carriers, moderate weather conditions, and short distances between the origin airport and the destination airport 
+
+
+# Data Description & Preparation
+
+## Relvant Datasets: 
+
+Our main data set is `nycflights13::flights`:
+
+```{r, echo = FALSE }
+help(package="nycflights13")
+
+?flights # full documentation of flights
+# View(flights) # see the data in RStudio Viewer
+glimpse(flights)
+
+```
+
+We also will use any additional `nycflights13` data set, specifically the `nycflights13::weather` data sets: 
+
+```{r, echo = FALSE }
+?weather # full documentation of weathers
+# View(weather) # see the data in RStudio Viewer
+glimpse(weather) 
+```
+
+## Dataset Limitations
+Some limitations of this data set are that it only contains data from 3 airports in New York City, and while these are the three main airports in the city, it does not account for all the other airports in the city. The variable planes also have many missing values, which would require cleaning of our dataset. Some flights are also missing delay data.. The dataset also does not record flights arriving into NYC, either, so delays caused by the airport could be more difficult to measure.
+
+## Data Integration Process: 
+
+Filter out cancelled flights and combine the two data set `nycflights13:flights` and `nycflights13:weather` data. Then add seasons and delayed not delayed variable 
+
+In order to clean our datasets to obtain the variables we needed for our models, we first needed to make sure the units for our variables aligned in order to use them in our models. In using the `nycflights13::weather` dataset, the weather column only has entries for every hour of each day, while the ‘flights’ dataset has several flights that fall into a single hour. This means that we will need to match each flight's departure time with the weather at the corresponding hour, which we accomplished by using the left_join() function in the ‘dplyr’ package. However, before this, we dropped the ‘weather variables that we will not be using, such as the N/A columns or the columns with no value, to further clean our dataset and prep it for integration. Lastly, we added the season variable based on months. 
+
+
+```{r, echo = FALSE }
+#creating the season predictor:
+
+flights <- flights |> add_column(season = "Spring")
+
+for(i in 1:length(flights$season)){
+  
+  if(flights$month[i] == 1 | flights$month[i] == 2 | flights$month[i] == 12){
+    flights$season[i] = "Winter"
+  }
+  if(flights$month[i] == 6 | flights$month[i] == 7 | flights$month[i] == 8) {
+    flights$season[i] = "Summer"
+  }
+  if(flights$month[i] == 9 | flights$month[i] == 10 | flights$month[i] == 11){
+    flights$season[i] = "Fall"
+  }
+}
+
+flights$season <- factor(flights$season, levels = c("Winter", "Spring", "Summer", "Fall"))
+
+#Join the data sets: 
+
+flights_weather <- left_join(flights, weather)
+
+flights_weather <- flights_weather |> filter(!(is.na(arr_delay) | is.na(dep_delay)))
+
+# create delayed predictor indicating whether a flight was delayed or not 
+flights_weather$delayed <- as.factor(flights_weather$dep_delay > 0)
+
+glimpse(flights_weather)
+```
+
+
+# Identified Used Variables 
+For our EDA, we focused mainly on carrier and weather differences as variables that contributed to departure delay, so the following are the variables we used for our EDA and models: 
+- `Temp`
+- `humid` 
+- `wind_dir`
+- `wind_speed`
+- `precip`
+- `pressure`
+- `visib` 
+- `month`
+- `arr_delay`
+- `carrier`
+- `distance`
+- `flight_date`
+- `season`
+
+
+# Data Exploration And Visualization
+
+## Bar Charts of Delay by Season:
+
+```{r, echo = FALSE }
+#Histogram by Season
+ggplot(data = flights_weather, aes(x = season, fill = delayed)) +
+        geom_bar(position = "stack", color = "black") +
+        ggtitle("Delay by Season") +
+        scale_fill_manual(values = c("lightgreen", "yellow"))
+```
+
+Using flight data from non-canceled flights, we separated delayed flights(flights with a departure delay greater than 0) from non-delayed flights. From these bar charts we can see that Summer had both the most number of flights and the largest proportion of delayed flights, while Winter had the least number of flights and Fall had the smallest proportion of delayed flights. These deviations in delayed flights tell us that Seasons may be a good predictor of departure delay.
+
+
+## Box Plots of Season vs. Departure Delay:
+
+```{r, echo = FALSE }
+#Boxplots by Season
+ggplot(data = flights_weather) +
+  geom_boxplot(mapping = aes(x = season, y = dep_delay, fill = season)) +
+  coord_cartesian(ylim=c(-20, 45)) +
+  ggtitle("Box Plot of Season vs. Departure Delay") +
+  scale_fill_manual(values = c("#99FF00", "green", "#FFFF66", "#FFFF00"))
+```
+
+Using flight data from non-canceled flights, we compared the distributions of the departure delay from each season. We observed that while some of the seasons had similar medians, their third quartiles were notably different. Summer had the worst delays, while Fall had the smallest delays. These differences indicate that Seasons might be a relevant predictor of departure delays.
+
+## Correlation Plot for Numeric Flight and Weather Variables:
+
+```{r, echo = FALSE}
+#Correlation Matrix
+numeric_variables <- flights_weather %>%
+  select_if(is.numeric)
+
+numeric_variables <- numeric_variables[, 2:23]
+
+numeric_variables <- numeric_variables[, c(-3, -4, -5, -6, -7, -8, -9, -12, -13)]
+
+
+cor_matrix <- cor(numeric_variables, use = "complete.obs")
+
+corrplot(cor_matrix, col = colorRampPalette(c("yellow", "white", "lightgreen"))(200), type = "upper", order = "hclust", tl.col = "black", tl.srt = 45, title = "Correlation Plot for Numeric Flight and Weather Variables", mar = c(0.5, 0.5, 1.5, 0.5))
+
+```
+
+By joining the flights and weather datasets and only taking into consideration non-canceled flights, we looked at the correlation between the numeric variables. When two highly correlated numeric variables are added into linear models, they create multicollinearity issues. To avoid these issues we must identify pairs of highly correlated variables and exclude one variable from each pair.
+
+## Delay vs. Wind Speed by Season
+
+```{r, echo = FALSE}
+#Delay vs Wind Speed Line Plot by Season
+plot <- flights_weather |> filter(!is.na(wind_speed))
+
+ggplot(data = plot, aes(x = wind_speed, y = dep_delay, color = season)) +
+        #geom_point(size = 0.01) +
+        geom_smooth(se = FALSE) +
+        ggtitle("Delay vs. Wind Speed by Season") +
+        scale_color_manual(values = c("orange", "green", "#FF6633", "yellow")) 
+```
+
+Using joined flight and weather data and only taking into account non-canceled flights and non-NA `wind_speed` values, we can compare departure delay and wind speed by each Season. From this plot we can see that there is a general increase in departure delay as wind speed increases, especially in the Summer. This indicates that `wind_speed` may be a significant predictor of departure delay.
+
+# Data Cleaning  
+As a result of our EDA and other reasoning, we will get rid of the following variables:
+
+- `wind_gust`, `dewp`, `air_time`: since these variables are highly correlated with `wind_speed`, `humid`, and `distance` respectively, we get rid of these variables.
+- `year`, `sched_dep_time`, `dep_time`, `sched_arr_time`,`arr_time`, `flight`,`tailnum`,`day`: variables are not needed for our research objective 
+- `time_hour`: after using this to join our two data set, this variable is not needed for our research objective 
+- `origin`, `dest`: see limitation to why we did not include these variables 
+
+```{r, echo = FALSE}
+flights_weather <- flights_weather |>
+  #getting rid of above listed variables 
+    dplyr::select(-wind_gust, -dewp, -air_time, -origin, -dest, 
+                  -time_hour, -year, - sched_dep_time, -dep_time,
+                  -sched_arr_time,-arr_time,-day, -flight,-tailnum)
+
+glimpse(flights_weather)
+
+```
+
+# Methodology & Analysis Plan
+
+For our data set and research objective, we are using a multiple linear regression model with our outcome variable being `dep_delay`, and our predictors include variable pertaining to weather, time, departure times, arrival times, flight, and airline. For our variable selection, we are using mixed selection, specifically stepwise selection based on AIC. We are utilizing a multiple linear regression model because we would like to figure out the multiple factors that influences departure delay while keeping the modeling simple and easy to interpret. Additionally, we utilize stepwise selection based on AIC and mixed selection for our variable selection because backward selection is prone to overfitting and low predictive accuracy while is a greedy approach, and might include variables early that later become redundant. On the other hands, stepwise selection based on AIC penalizes complexities, which helps with overfitting. However, just using stepwise selection creates invalid inferences since we are essentially using the data twice, once choosing the model and the other making inferences. To remedy this, we split the data into training for model selection and testing sets for inferences.  
+
+## Assumptions
+
+Since we are using Multiple Linear Regression (MLR), the following are our assumptions:
+- Linearity
+- Independence
+- Constant Variance
+- Normality
+
+## Modelling 
+
+We created two models: one with solely weather predictors and a full model 
+
+For the full model, we include all predictors in our clean data set.
+
+```{r, echo = FALSE }
+#full model
+
+set.seed(123)
+split <- sample(seq_len(nrow(flights_weather)), size = 0.7 * nrow(flights_weather))
+train <- flights_weather[split, ]
+test  <- flights_weather[-split, ]
+
+train_small <- train[sample(nrow(train), 10000), ]  # use 10,000 rows instead of all
+
+step_model <- step(glm(dep_delay ~ ., data = train_small), direction = "both")
+
+#Selected variables 
+summary(step_model)
+
+#Ensure factor levels are consistent across datasets
+for (col in names(train)) {
+  if (is.factor(train[[col]])) {
+    test[[col]] <- factor(test[[col]], levels = levels(train[[col]]))
+  }
+}
+
+# Extract formula from step_model
+refit_formula <- formula(step_model)
+
+# Refit the model on the test data
+inference_model <- glm(refit_formula, data = test)
+summary(inference_model)
+
+```
+
+```{r, echo = FALSE }
+#weather model
+
+set.seed(123)
+split <- sample(seq_len(nrow(flights_weather)), size = 0.7 * nrow(flights_weather))
+train <- flights_weather[split, ]
+test  <- flights_weather[-split, ]
+
+train_small <- train[sample(nrow(train), 10000), ]  # use 10,000 rows instead of all
+
+step_model2 <- step(glm(dep_delay ~ temp + humid + wind_dir + wind_speed + precip + 
+    pressure + visib, data = train_small), direction = "both")
+
+#Selected variables 
+summary(step_model2)
+
+#Ensure factor levels are consistent across datasets
+for (col in names(train)) {
+  if (is.factor(train[[col]])) {
+    test[[col]] <- factor(test[[col]], levels = levels(train[[col]]))
+  }
+}
+
+# Extract formula from step_model
+refit_formula2 <- formula(step_model2)
+
+# Refit the model on the test data
+inference_model2 <- glm(refit_formula2, data = test)
+summary(inference_model2)
+
+```
+
+# Model Implementation & Evaluation
+
+## Residual Plots
+
+```{r, echo = FALSE}
+#full model: 
+par(mfrow = c(2, 2))
+plot(inference_model)
+
+#weather model: 
+par(mfrow = c(2, 2))
+plot(inference_model2)
+```
+Our first plot is the residual plot for the full model. As you can see from the plot the normality assumption is violated, and there is indication of heteroscedasticity too. Our second plot is the residual plot for the weather model. From this plot we see that the normality assumption is violated, and there is some non-linearity. Considering all of this, we can conclude that the better model is the full model. This suggest that weather variables alone may not be able to fully predict departure delays, and that other factors are at play or have a stronger relationship compared to weather predictors! 
+
+## 10-Fold Cross Validation test: 
+
+After doing a 10-fold cross validation test on both models, we got a way bigger weighted cross validation Mean squared error value for the weather model compared to the full model. This means that even though our full model violated our assumptions for MLR, it is the better model compared to the weather model. This suggest that weather variables alone may not be able to fully predict departure delays, and that other factors are at play or have a stronger relationship compared to weather predictors! 
+
+```{r, collapse = T, echo = FALSE }
+set.seed(134) 
+
+test <- na.omit(test)
+
+#Run 10-fold CV test on full model:
+
+# Perform 10-fold CV
+
+# Extract formula from step_model
+refit_formula <- formula(step_model)
+
+# Refit the model on the test data
+inference_model <- glm(refit_formula, data = test)
+
+cv.result <- cv.glm(data = test, glmfit = inference_model, K = 10)
+
+# get weighted CV MSE value 
+full.CV.MSE <- cv.result$delta[2]
+
+#Run 10-fold CV test on weather model: 
+
+# Perform 10-fold CV
+# Extract formula from step_model
+refit_formula2 <- formula(step_model2)
+
+# Refit the model on the test data
+inference_model2 <- glm(refit_formula2, data = test)
+
+cv.result <- cv.glm(data = test, glmfit = inference_model2, K = 10)
+
+# get weighted CV MSE value 
+weather.CV.MSE <- cv.result$delta[2]
+
+
+# Compare the weighted CV MSE 
+full.CV.MSE
+weather.CV.MSE
+```
+
+
+# Results and Discussion
+
+**Weather alone does not explain delays well**
+
+Our first model only used weather variables like temperature, wind speed, and visibility. Its adjusted R squared was just 0.028, which means these factors on their own do not account for much of the variation in flight delays. Even though weather is often blamed for delays, the data shows it is not a strong predictor unless combined with other information. This answers our question about how impactful weather truly is. It plays a role, but not by itself.
+
+
+**The full model gave us much better results**
+
+When we included additional variables like airline, distance, day of the week, and previous arrival delay, the model's performance improved a lot. The adjusted R squared went up to 0.834 and the cross-validated MSE dropped to around 234.7. This shows that delays are complex and influenced by many interacting factors. It also helps answer several of our research questions. Airline, time of year, and other flight-related details really do impact delays.
+
+
+**Specific weather features still mattered**
+
+Even though the weather-only model was weak overall, individual weather features like wind speed, temperature, pressure, and visibility were still statistically significant in both models. This means that while weather is not enough on its own, it does help when used with other predictors. This could help airports and airlines make more informed decisions during certain conditions, especially if they want to reduce delay risks tied to the environment.
+
+**Carriers like Alaska Airlines and seasons like winter were not significant variables**
+
+When conducting our model analysis, we can see that most carriers and seasons were very significant. However, Alaska Airlines and Winter were not significant within these variables. This means that these specific variables do not play much of a role in predicting departure delay. This can be counterintuitive due to severe weather conditions in the winter season. The reason why Alaska Airlines may not have been significant is because there may be very few recorded values with Alaska Airlines. The lack of data within this carrier may have impacted its significance on departure delay. 
+
+**Arrival delay being our most significant variable**
+
+When analyzing the model, we can see that our most significant variable in the model is arrival delay due to the coefficient value of 0.8199 which is the highest in the model. Though we did not state this in our hypothesis, this is something we expected as we saw it when we conducted our EDA before fitting the model. Through this, we can also say that as arrival delay increases the departure delay will also increase by about 0.82 minutes for each additional minute. 
+
+**Precipitation as our least significant variable**
+
+The least significant predictor in our model is precipitation. This variable had a coefficient of -8.787 which was the lowest in the model. This means that precipitation and arrival delay have a negative correlation. This could be counterintuitive as precipitation is a very common reason for flight delays and seeing that it has a negative correlation with departure delay may be inaccurate and does not go with what we expected to happen. 
+
+## Limitations:
+
+**Assumption violations may affect inference**
+
+Both models broke the normality assumption, which we saw in the residual diagnostic plots. This does not hurt the model’s prediction ability, but it does affect how reliable the p-values and confidence intervals are. So while some variables came out as significant, that result should be taken carefully since the assumption behind it was not fully met.
+
+**We could not use airport-specific variables**
+
+We had to remove the origin and destination columns because they caused problems with cross-validation. We used distance instead, but that does not fully capture effects related to specific airports or routes. For example, some airports might have more congestion or traffic than others. By not including these variables, the model may have missed important location-based patterns that matter in the real world.
+
+**We only explore linear models:** 
+
+The only models we explored for this project were linear models. Though linear models are effective as we are trying to see if there are linear relationships between weather factors and departure delays, we did not get the results we anticipated. Since the normality assumption was not satisfied, this could have been a reason as to why linear models were not the most effective models for this analysis. To see if we can get better results, we can look into transforming our variables to make sure our assumptions are satisfied or we can also look into other regression models such as logistic or poisson to see if we get statistically better predictions. 
+
+**Multicollinearity may be present** 
+
+Some of the weather variables in the model were not correlated like the way we expected them to be. We expected that the worse the weather conditions are, the more departure delays there will be. We saw that in some weather variables, which made sense, but there were a couple where it didn’t, such as precipitation. Rain usually is positively correlated with departure delay, but in our model we can see that it is negatively correlated. This may be due to multicollinearity present between some variables in the model. When this happens, variables are not evaluated well in the model and there may be inaccuracies when interpreting the model. To fix this, we can check for multicollinearity using the vif() function in R and dropping variables that are highly correlated with each other, so our results will be more accurate. 
+
+
+
+# Authors' Contributions 
+
+Jazmyne Patlan - EDA, Hypothesis
+
+Sai Shrinidi Krishnan - Key Conclusions, Limitations
+
+Roxana Nguyen - Statistical Learning Method, Results 
+
+Iswarya Dinesh Kumar - Project Background, Project Objective, Research Questions, Statistical Learning Method 
+
+Carolyn Hsu - Project Background, Project Objective, Assumptions & Hypothesis
+
+Carl Luis Ortiz - Key Conclusions, Limitations
+
+# Data/Code Availability: 
+
+- The data set we used can be found here: [US Bureau of Transportation Statistics](https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FGJ&QO_fu146_anzr=b0-gvzr).
+
+- The specific code used in this project can be found here: [Group 11's R Markdown File](https://drive.google.com/drive/folders/19n93RHF61s-D6-g8Q7LIS8oHFvMV3oRV?usp=sharing)
+
+# References
+[Season Wikipedia](https://en.wikipedia.org/wiki/Season)
