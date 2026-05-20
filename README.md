@@ -8,4 +8,4 @@ In this project, I collaborated with 5 other class peers to determine variables 
 The RMarkdown script can be found in this repository, and the [Google Slides presentation](https://docs.google.com/presentation/d/1-7N5y44knKW9p6qgT_iQ9A6-1x7vG9L_ezyr0MT_gR4/edit?usp=sharing) can be found through the link.
 
 ## CS 150A Discussion Post 
-In this discussion post, I was tasked to create at least 5 database tables and alter them. 
+In this discussion post assignment, I was tasked to create at least 3 database tables and insert values into the tables. I chose to base my database off my experience as a PHP lead at The Well. The Well is a mini public health department on campus with many guests who visit and use our services for various reasons. To track this metric for program improvement, I created this simple SQL database with multiple tables and data queries!
