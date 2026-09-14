@@ -1,0 +1,162 @@
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+```
+
+```{r}
+checkpoints.eoc <- read.csv("/Users/school/Desktop/datafest 2025/Data/Random Sample of Data Files/checkpoints_eoc.csv")
+
+checkpoints.pulse <- read.csv("/Users/school/Desktop/datafest 2025/Data/Random Sample of Data Files/checkpoints_pulse.csv")
+```
+
+
+```{r}
+merged_data <- left_join(checkpoints.pulse, checkpoints.eoc, by = c("student_id", "book", "class_id", "chapter_number"))
+
+merged_data <- subset(merged_data, book == "College / Advanced Statistics and Data Science (ABCD)")
+
+filtered_data <- merged_data %>%
+  filter(!is.na(release))
+
+filtered_data <- merged_data %>%
+  filter(!is.na(EOC))
+```
+
+```{r}
+release_count <- filtered_data %>%
+  count(release)
+
+# Create a pie chart with additional enhancements
+pie_chart <- ggplot(release_count, aes(x = "", y = n, fill = release)) +
+  geom_bar(stat = "identity", width = 1, color = "white") +  # Add white borders for separation
+  coord_polar(theta = "y", start = 0) +  # Start at 0 degrees for consistent rotation
+  scale_fill_brewer(palette = "Set4") +  # Use a color palette for better visual contrast
+  geom_text(aes(label = paste0(release, ": ", n)), position = position_stack(vjust = 0.5)) +  # Add text labels within pie slices
+  labs(
+    title = "Distribution of Releases",
+    subtitle = "Pie chart showing frequency of each release",
+    caption = "Source: My Dataset"
+  ) +
+  theme_minimal() +  # Apply a minimal theme
+  theme(
+    axis.ticks = element_blank(),
+    axis.text.x = element_blank(),  # No axis ticks or x-axis text
+    panel.grid = element_blank(),  # No gridlines
+    legend.title = element_blank(),  # No legend title
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Centered and bold title
+    plot.subtitle = element_text(hjust = 0.5),  # Centered subtitle
+    plot.caption = element_text(hjust = 1)  # Right-aligned caption
+  )
+
+# Display the pie chart
+print(pie_chart)
+```
+
+
+```{r}
+# Create a histogram and density of EOC
+
+# Assuming binwidth of 0.05, scale density to align with histogram
+bin_width <- 0.05
+
+ggplot(data = filtered_data, aes(x = EOC)) +
+  geom_histogram(binwidth = bin_width, fill = "pink", color = "white") +
+  geom_density(aes(y = after_stat(count) * bin_width),  # Scale density by binwidth
+               alpha = 0.5, fill = "lightpink", color = "red") +  # Adjusted density plot
+  geom_vline(aes(xintercept = median(EOC)), color = "blue", linetype = "dashed") +  # Median line
+  labs(
+    title = "Histogram and Density of EOC",
+    subtitle = "With Median Line",
+    x = "End of Course (EOC) Scores",
+    y = "Count",  # Adjusted y-axis label
+    caption = "Source: Sample Data"
+  ) +
+  theme_minimal() +  # Minimal theme for a cleaner look
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),  # Bold and centered title
+    plot.subtitle = element_text(hjust = 0.5),  # Centered subtitle
+    plot.caption = element_text(hjust = 1),  # Right-aligned caption
+    axis.title.x = element_text(face = "bold"),  # Bold x-axis label
+    axis.title.y = element_text(face = "bold"),  # Bold y-axis label
+    panel.grid = element_blank(),  # No gridlines for a cleaner look
+    legend.position = "none"  # Remove legend if not needed
+  ) +
+  annotate("text", x = median(filtered_data$EOC), y = 10, label = "Median",
+           color = "blue", angle = 90, vjust = -0.5, hjust = -0.5)  # Annotate median line
+
+
+```
+ 
+```{r}
+# Function to plot data for a specific release
+plot_attempts_by_chapter <- function(data, release_version, color = "skyblue", plot_title = "") {
+  subset_data <- subset(data, release == release_version)
+  ggplot(subset_data, aes(x = chapter_number, y = n_attempt, fill = release_version)) +
+    geom_col(fill = color, alpha = 0.8) +  # Customize the color and opacity
+    labs(
+      title = plot_title,  # Add a custom title
+      x = "Chapter Number",
+      y = "Number of Attempts"
+    ) +
+    theme_minimal() +  # Apply a minimal theme for a cleaner look
+    theme(
+      plot.title = element_text(hjust = 0.5),  # Center the title
+      text = element_text(size = 12),  # Adjust text size
+      legend.position = "none"  # Hide the legend since it's redundant
+    )
+}
+
+# Plot for v5.0
+plot_v50 <- plot_attempts_by_chapter(filtered_data, "v5.0", "skyblue", "Release v5.0 - Attempts by Chapter")
+print(plot_v50)
+
+# Plot for v5.0-exp2
+plot_v5exp2 <- plot_attempts_by_chapter(filtered_data, "v5.0-exp2", "orange", "Release v5.0-exp2 - Attempts by Chapter")
+print(plot_v5exp2)
+
+# Plot for v5.1.1
+plot_v51 <- plot_attempts_by_chapter(filtered_data, "v5.1.1", "green", "Release v5.1.1 - Attempts by Chapter")
+print(plot_v51)
+
+```
+
+
+```{r}
+# Create a ggplot for EOC by version
+ggplot(data = filtered_data, aes(x = release, y = EOC)) +
+  geom_boxplot(
+    fill = "coral2",  # Soft fill color
+    color = "coral4",  # Outline color
+    alpha = 0.7,  # Transparency
+    outlier.color = "red",  # Color for outliers
+    outlier.shape = 16,  # Shape for outliers
+    outlier.size = 2  # Size for outliers
+  ) +
+  coord_flip() +  # Flip coordinates to make the plot horizontal
+  labs(
+    title = "EOC by Version",
+    x = "Version",  # Label for x-axis
+    y = "EOC",  # Label for y-axis
+    caption = "Source: Sample Data"  # Caption for the plot
+  ) +
+  theme_minimal() +  # Start with a minimal theme
+  theme(
+    plot.background = element_rect(fill = "#181818ff", color = NA),  # Set plot background to black
+    panel.background = element_rect(fill = "#181818ff", color = NA),  # Set panel background to black
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5, color = "white"),  # White font for title
+    plot.caption = element_text(hjust = 0, color = "white"),  # White font for caption
+    axis.title.x = element_text(face = "bold", color = "white"),  # White font for x-axis
+    axis.title.y = element_text(face = "bold", color = "white"),  # White font for y-axis
+    axis.text.x = element_text(color = "white"),  # White font for x-axis text
+    axis.text.y = element_text(color = "white"),  # White font for y-axis text
+    panel.grid.major = element_line(color = "gray", linetype = "dotted"),  # Gray grid lines for contrast
+    panel.grid.minor = element_blank(),  # Hide minor grid lines
+    panel.border = element_blank(),  # No panel border
+    strip.background = element_rect(fill = "#181818ff"),  # Black background for facet strips
+    strip.text = element_text(color = "white")  # White font for facet labels
+  ) +
+  facet_wrap(~chapter_number)  # Facet by chapter_number
+```
+
