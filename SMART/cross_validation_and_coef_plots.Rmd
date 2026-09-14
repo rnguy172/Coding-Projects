@@ -1,0 +1,235 @@
+---
+title: "Analysis of Health Care Access Dataset"
+output:
+  html_document:
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Prepare Workspace, Load Data
+
+```{r}
+library(glmnet)
+library(reshape2)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(viridis)
+library(grDevices)
+```
+
+
+```{r}
+# Load data
+load("data_cleaned.RData")
+```
+
+
+
+# Variable Selection via LASSO 
+
+Perform variable selection by tuning the penalty parameter $\lambda$ to yield the smallest model that achieves Binomial Deviance (estimated using 10-fold cross validation) within one standard error of the minimum value over all considered values of $\lambda$.
+
+```{r}
+# Create design matrix for predictors (required for gv.glmnet() input format)
+X_design <- model.matrix(y ~ ., df)[, -1]
+
+# Fit logistic regression model with LASSO penalty for variable selection
+# Automatically tries many different values of shrinkage parameter lambda
+cv_lrlasso <- cv.glmnet(X_design, df$y, family = "binomial")
+plot(cv_lrlasso)
+```
+
+This results in a model containing the following predictors:
+
+```{r}
+# cv_lrlasso$glmnet.fit$lambda contains the sequence of lambda values tried
+# Get the index of the lambda value where deviance is 1 SE above minimum
+# (corresponds to right-hand vertical dashed line in plot; left is optimum)
+# (we accept slightly suboptimal deviance in exchange for fewer predictors)
+idx_lambda <- with(cv_lrlasso, which.min(abs(glmnet.fit$lambda - lambda.1se)))
+
+# Get the coefficient estimates corresponding to the selected lambda
+beta_lambda <- cv_lrlasso$glmnet.fit$beta[, idx_lambda]       
+lasso_coefs <- names(beta_lambda)[which(beta_lambda != 0)]    
+lasso_coefs
+```
+
+Note: `education_less_highschool` and `education_bachelors` are zip-code level quantitative variables measuring percentage of population who belong to the named educational demographic.
+
+We fit a logistic regression model with the selected predictors to the full sample of observations, and we use 10-fold cross validation to estimate the overall and class-specific accuracy rates.
+
+```{r}
+# Create input data corresponding to variables selected by LASSO
+dfsub <- df
+dfsub$patient_raceWhite <- df$patient_race == "White"
+dfsub$payer_typeCOMMERCIAL <- df$payer_type == "COMMERCIAL"
+dfsub$RegionWest <- df$Region == "West"
+dfsub <- select(dfsub, all_of(lasso_coefs))
+dfsub$y <- df$y# Create design matrix for predictors (required for gv.glmnet() input format)
+
+# Fit logistic regression model using variables selected by LASSO
+fit_lrlasso <- glm(y ~ ., data = dfsub, family = binomial)
+
+# Generate predictions using fitted model
+pi_hat <- predict.glm(fit_lrlasso, dfsub, type = "response")
+y_hat <- as.numeric(pi_hat > 0.5)
+
+# Create confusion matrix
+cmat <- table("Truth" = df$y, "Pred" = y_hat)
+cmat
+```
+
+
+
+```{r}
+# Accuracy rates
+acc <- c("Overall" = sum(diag(cmat)) / sum(cmat), # Overall accuracy
+         "Specificity" = cmat[1, 1] / sum(cmat[1, ]), # Specificity
+         "Sensitivity" = cmat[2, 2] / sum(cmat[2, ])  # Sensitivity
+)
+acc <- round(acc, 3)
+acc
+```
+
+
+
+```{r}
+# Coefficient estimates
+summary(fit_lrlasso)
+```
+
+```{r}
+# Coefficient estimates on odds-ratio scale instead of log odds ratio
+exp(coef(summary(fit_lrlasso)))
+```
+
+E.g., a white person has ~1.14 times the odds of treatment compared to a non-white person.
+
+
+
+# Comparison to Significant Predictors in Full Model
+
+```{r}
+# fit Logistic Regression with all predictors
+fit_lrfull <- glm(y ~ ., data = df, family = binomial)
+
+# Generate predictions using fitted model
+pi_hat <- predict.glm(fit_lrfull, df, type = "response")
+y_hat <- as.numeric(pi_hat > 0.5)
+
+# Create confusion matrix
+cmat_full <- table("Truth" = df$y, "Pred" = y_hat)
+cmat_full
+
+# Accuracy rates
+acc_full <- c("Overall" = sum(diag(cmat_full)) / sum(cmat_full), # Overall accuracy
+         "Specificity" = cmat_full[1, 1] / sum(cmat_full[1, ]), # Specificity
+         "Sensitivity" = cmat_full[2, 2] / sum(cmat_full[2, ])  # Sensitivity
+)
+acc_full <- round(acc_full, 3)
+acc_full
+```
+
+
+```{r}
+# Significant predictors
+signif_coefs <- coef(summary(fit_lrfull))
+signif_coefs <- subset(signif_coefs, signif_coefs[, 4] < 0.05)
+signif_coefs
+```
+
+```{r}
+# Coefficient estimates on odds-ratio scale instead of log odds ratio
+exp(signif_coefs[, 1])
+```
+
+
+
+
+# Coefficient Plots
+
+
+
+```{r}
+# Plot on log odds scale
+signif_coefs <- as.data.frame(coef(summary(fit_lrfull)))
+signif_coefs <- subset(signif_coefs, signif_coefs[, 4] < 0.05)
+signif_coefs$Predictor <- rownames(signif_coefs)
+ggplot((signif_coefs), aes(x = Predictor, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip()
+
+```
+```{r}
+# Plot on odds scale
+signif_coefs_odds <- signif_coefs
+signif_coefs_odds$Estimate <- exp(signif_coefs$Estimate)
+ggplot(signif_coefs_odds, aes(x = Predictor, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  geom_hline(yintercept = 1, color = "red")
+```
+
+
+
+```{r}
+# compare coefficient estimates
+make_coefplot(fit_lrfull, fit_lrlasso)
+```
+
+
+# Cross-Validation (Without LASSO)
+
+
+```{r}
+storage <- matrix(nrow = 10, ncol = 3)
+n <- 12873
+idx <- sample(n)
+fold_size <- floor(n / 10)
+for (i in 1:10) {
+  # start and end positions of index vector for ith fold
+  start_position <- (i - 1) * fold_size + 1
+  end_position <- i * fold_size
+  if (i == 10) {
+    end_position <- n
+  }
+  # test indices (indices for ith fold)
+  test_ind <- idx[start_position:end_position]
+  
+  # training indices (all indices not in ith fold)
+  train_ind <- (1:n)[-test_ind]
+  
+  # fit model on all data except ith fold
+  glm.fit_Train <- glm(y ~ ., data = df, subset = train_ind, family = binomial)
+  
+  # predict on ith fold
+  pi_hat <- predict(glm.fit_Train, df[test_ind, ], type = "response")
+  y_hat <- as.numeric(pi_hat > 0.5)
+  
+  # compute accuracy rates
+  cmat <- table("Truth" = df[test_ind, "y"],
+                "Pred" = y_hat)
+  acc <- c("Overall" = sum(diag(cmat)) / sum(cmat), # Overall accuracy
+           "Specificity" = cmat[1, 1] / sum(cmat[1, ]), # Specificity
+           "Sensitivity" = cmat[2, 2] / sum(cmat[2, ])  # Sensitivity
+  )
+  storage[i, ] <- round(acc, 3)
+  
+}
+```
+
+```{r}
+cv_acc <- colMeans(storage)
+names(cv_acc) <- c("Overall", "Specificity", "Sensitivity")
+cv_acc
+```
+
+
+```{r}
+table(df$y)/sum(table(df$y))
+```
+

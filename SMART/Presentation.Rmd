@@ -1,0 +1,276 @@
+---
+title: "Statistical Data Mining With R"
+author: Roxana Nguyen, Brian Neal
+output: 
+  beamer_presentation:
+    df_print: kable
+    theme: Singapore
+    colortheme: seahorse
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,   # don't display warnings
+                      message = FALSE   # don't display messages
+                      )
+```
+
+```{r}
+##library
+library(ggplot2)
+library(dplyr)  # for select()
+library(ggcorrplot)
+```
+
+# Introduction 
+
+## Source
+- Health Verity (HV)
+- U.S. Postal Service
+- U.S. Census Bureau 
+- National Weather Service 
+- American Community Survey 
+- the IRS
+- NASA/Columbia University
+
+## Data
+Health determinants of Americans who got or did not get a timely diagnosis for metastatic triple negative breast cancers (within 90 days) 
+
+- e.g. race, location, education level of location, income of location, diagnosed within 90 days
+
+\textbf{Note:} Getting a timely diagnosis is good indicator for healthcare access
+
+## Goal
+\textbf{Observe any health disparities associated with patient race and/or other factors} 
+
+```{r}
+load("data_cleaned.RData")
+
+
+```
+
+```{r}
+glm.fits <- glm(
+y ~ .,
+data = df , family = binomial 
+)
+```
+
+# Cleaning Data
+
+## Variables 
+Response Variable: `DiagPeriodL90D`
+
+Factor Most Interested In: `patient_race`
+
+### Removed Predictors
+
+- Patient ID 
+- Patient Gender
+- Patient State
+- Patient ZIP code
+- Breast cancer diagnosis code
+- Breast cancer diagnosis description
+- Metastatic cancer diagnosis code
+- `metastatic_first_novel_treatment` 
+- `metastatic_first_novel_treatment_type`
+- `bmi`
+
+## Matrix of Pairwise Correlations Among Predictors
+```{r}
+load("WiDS dataset.rdata")
+heatmap
+```
+
+## Matrix of Pairwise Correlations Among Predictors
+### Removed Predictors Based On Correlation Matrix  
+Based on cut-off point of 0.9 correlation: 
+
+- `housing_units`              
+- `male`                        
+- `married`                     
+- `income_individual_median`    
+- `income_household_six_figure` 
+- `income_household_150_over`   
+- `home_value`                  
+- `education_college_or_above`  
+
+
+
+# Analysis
+
+## Choosing Model
+### Linear Regression or Multiple Logistic Regression? 
+
+```{r}
+knitr::include_graphics("/Users/school/Desktop/SMART/WiDS dataset/final.png")
+
+
+```
+
+## Distribution of Response Variable 
+
+```{r} 
+load("response.rdata")
+rDist
+
+```
+
+
+## Coefficient Plots: Log Odds Scale
+```{r, include = TRUE}
+# Plot on log odds scale
+signif_coefs <- as.data.frame(coef(summary(glm.fits)))
+signif_coefs <- subset(signif_coefs, signif_coefs[, 4] < 0.05)
+signif_coefs$Predictor <- rownames(signif_coefs)
+ggplot((signif_coefs), aes(x = Predictor, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Coefficient Plot (Log Odds Scale)", y = "Coefficient", x = "Predictors")
+
+```
+
+## Coefficient Plots: Odds scale
+```{r}
+# Plot on odds scale
+signif_coefs_odds <- signif_coefs
+signif_coefs_odds$Estimate <- exp(signif_coefs$Estimate)
+ggplot(signif_coefs_odds, aes(x = Predictor, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  geom_hline(yintercept = 1, color = "red") +
+  labs(title = "Coefficient Plot (Odds Scale)", y = "Coefficient", x = "Predictors")
+```
+
+## Coefficient Plots: Summary
+Using $\alpha$ = 0.05, and if logistic regression model is good model for our data...
+
+### Strongest determinants of receiving a timely diagnosis:
+- `education_bachelors`
+- `education_less_highschool`
+- `education_highschool`
+- `education_some_college`
+
+### `hispanic` and `patient_raceWhite`
+- `hispanic`: magnitude is very small and can be treated as zero
+
+- `patient_raceWhite`: positive coefficient magnitude 
+
+## Coefficient Plots: Summary
+
+### `payer_type`, `family_size`, `DivisionEast South Central`    
+- All negative coefficient 
+- `payer_type`: 
+    + All same coefficient magnitudes
+    
+        + Meaning all same predictive access to healthcare
+          
+    + Known `payer_type` being compared to unknown/blank `payer_type` 
+    
+    + Therefore, we cannot make any meaningful inference
+
+### `income_household_75_to_100`, `DivisionMountain`
+- All positive coefficient 
+
+
+## Using Predicted Probabilities to Predict Response Values
+```{r, include = TRUE}
+##Generate Predicted Probabilities
+glm.probs <- predict(glm.fits, type = "response")
+
+glm.pred <- rep(0, 12873)
+glm.pred[glm.probs > .5] = 1
+
+attach(df)
+##confusion matrix
+cm <- table(glm.pred, y)
+
+sensitivity <- (cm[2,2])/sum(cm[,2])
+specificity <- cm[1,1]/sum(cm[,1])
+
+##has to match y level: training error rate  
+training_error_rate <- mean(as.factor(glm.pred) == y) 
+
+initial.pred <- data.frame(training_error_rate, specificity, sensitivity)
+initial.pred
+
+```
+### Training Error Rate
+Using the same data to fit the model, logistic regression made incorrect predictions 62.5% of the time.
+
+### Training Specificity
+Out of those who did not get a diagnosis, logistic regression correctly predicted 3.97% of the time. 
+
+### Training Sensitivity
+Out of those who did get a diagnosis, logistic regression correctly predicted 97.69% of the time.
+
+## Cross-Validated Error Rates 
+```{r}
+storage <- as.data.frame(matrix(nrow = 10, ncol = 3))
+n <- 12873
+idx <- sample(n)
+fold_size <- floor(n / 10)
+for (i in 1:10) {
+  # start and end positions of index vector for ith fold
+  start_position <- (i - 1) * fold_size + 1
+  end_position <- i * fold_size
+  if (i == 10) {
+    end_position <- n
+  }
+  # test indices (indices for ith fold)
+  test_ind <- idx[start_position:end_position]
+  
+  # training indices (all indices not in ith fold)
+  train_ind <- (1:n)[-test_ind]
+  
+  # fit model on all data except ith fold
+  glm.fit_Train <- glm(y ~ ., data = df, subset = train_ind, family = binomial)
+  
+  # predict on ith fold
+  pi_hat <- predict(glm.fit_Train, df[test_ind, ], type = "response")
+  y_hat <- as.numeric(pi_hat > 0.5)
+  
+  # compute accuracy rates
+  cmat <- table("Truth" = df[test_ind, "y"],
+                "Pred" = y_hat)
+  acc <- c("Overall" = sum(diag(cmat)) / sum(cmat), # Overall accuracy
+           "Specificity" = cmat[1, 1] / sum(cmat[1, ]), # Specificity
+           "Sensitivity" = cmat[2, 2] / sum(cmat[2, ])  # Sensitivity
+  )
+  storage[i, ] <- round(acc, 3)
+  
+}
+names(storage) <- c("Overall Accuracy", "Specificity", "Sensitivity")
+
+##average overall accuracy, specificity, and sensitivity 
+cv_acc <- colMeans(storage)
+names(cv_acc) <- c("Overall", "Specificity", "Sensitivity")
+
+```
+
+### Testing Accuracy, Specificity, and Sensitivity 
+```{r, include = TRUE}
+as.data.frame(t(cv_acc))
+
+```
+
+# Conclusion 
+
+## Logistic Regression As Good As Null Classifier
+It seems like logistic regression is just always predicting the response variable to be 1, or always predicting that people will receive the diagnosis within 90 days. 
+
+- Predictive accuracy of our logistic regression model is as good as a blind/null classifier. 
+ 
+ + Therefore, we do not consider the coefficients of the model.
+
+### Next Step? 
+- Better models?
+
+    - Tree based method (random forest)
+
+    - Machine learning model 
+
+- Or maybe there is just no meaningful relationships between predictors and response variable?
+
+

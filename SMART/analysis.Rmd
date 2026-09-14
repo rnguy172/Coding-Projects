@@ -1,0 +1,205 @@
+---
+title: "Analysis of Health Care Access Dataset"
+output:
+  html_document:
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Prepare Workspace, Load Data
+
+```{r}
+# Load data
+load("data_cleaned.RData")
+
+##library
+library(ggplot2)
+```
+
+
+# Logistic Regression
+
+## Fit Model to Full Dataset
+
+```{r}
+glm.fits <- glm(
+y ~ .,
+data = df , family = binomial 
+)
+summary(glm.fits)
+```
+
+## Interpret Model Summary
+Which coefficients are reported as being statistically significant? 
+
+Assuming $\alpha$ = 0.05
+
+*note:* 
+Variable’s p-values very small = variable associated with probability of binary response variable 
+-> clear evidence of a real association between these variables and DiagPeriodL90D
+
+The negative coeﬀicient for predictors suggests that the more likely the predictors occurs, then the person is less likely to have received treatment within the first 90 days since their diagnosis.
+
+The positive coeﬀicient for predictors suggests that the more likely the predictors occurs, then the person is more likely to have received treatment within the first 90 days since their diagnosis.
+
+```{r}
+
+##subsetting data to only show coefficient values and p-value respectively 
+co <- summary(glm.fits)$coef[, 1]
+pVal <- summary(glm.fits)$coef[, 4]
+
+##which variables' p-value is less than or equal to 0.05 (which is statistically significant?)
+statSIG <- c()
+coefSS <- c() 
+for(i in 1:length(pVal)){
+  if(pVal[i]<= 0.05){
+    statSIG <- c(statSIG, pVal[i])
+    coefSS <- c(coefSS, co[i])
+  }
+}
+
+##if you have time: plot coefficient magnitudes
+statSIG           ##clear evidence of a real association between these variables and DiagPeriodL90D
+coefSS            ##the coefficient of these variables
+
+#which statistically significant variables have negative coefficients (factors that correlate to lower likelihood of receiving treatment)?  
+neg_coefSS <- coefSS[coefSS<=0]
+neg_coefSS
+
+#which statistically significant variables have positive coefficients (factors that correlate to higher likelihood of receiving treatment)?  
+pos_coefSS <- coefSS[coefSS>=0]
+pos_coefSS
+
+##which statistically significant variable has the smallest coefficient? Ans: payer_typeMEDICARE ADVANTAGE
+coefSS[which.min(coefSS)]
+
+##which statistically significant variable has the biggest coefficient? Ans: bachelor degree 
+coefSS[which.max(coefSS)]
+
+
+##Which variable has the smallest p-value? (means anything??)
+pVal[which.min(pVal)]           ##the payer type being commerical has the highest statistical significance 
+co[which.min(pVal)]
+
+```
+# Coefficient Plots
+
+
+
+```{r}
+# Plot on log odds scale
+signif_coefs <- as.data.frame(coef(summary(glm.fits)))
+signif_coefs <- subset(signif_coefs, signif_coefs[, 4] < 0.05)
+signif_coefs$Predictor <- rownames(signif_coefs)
+ggplot((signif_coefs), aes(x = Predictor, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip()
+
+```
+```{r}
+# Plot on odds scale
+signif_coefs_odds <- signif_coefs
+signif_coefs_odds$Estimate <- exp(signif_coefs$Estimate)
+ggplot(signif_coefs_odds, aes(x = Predictor, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  geom_hline(yintercept = 1, color = "red")
+```
+
+
+## Generate Predicted Probabilities
+```{r}
+glm.probs <- predict(glm.fits, type = "response")
+
+```
+
+
+## Use Predicted Probabilities to Predict Response Values
+
+Use a threshold of 0.5.
+
+```{r}
+glm.pred <- rep(0, 12873)
+glm.pred[glm.probs > .5] = 1
+
+attach(df)
+##confusion matrix
+cm <- table(glm.pred, y)
+
+sensitivity <- (cm[2,2])/sum(cm[,2])
+sensitivity         ##Logistic regression correctly predicted if someone get treatment  97.69% of the time.
+
+specificity <- cm[1,1]/sum(cm[,1])
+specificity         ##Logistic regression correctly predicted if someone does not get a treatment 3.97% of the time 
+
+##has to match y level: training error rate  
+training_error_rate <- mean(as.factor(glm.pred) == y) 
+
+initial.pred <- data.frame(training_error_rate, specificity, sensitivity)
+```
+
+
+## Training Error Rate
+
+Misclassification rate for the in-sample predictions (that is, the predictions made for the same data used to fit the model).
+
+Training error rate is 62.5%
+
+# Estimating the Test Error via 10-Fold Cross Validation
+1. randomly split into 10 folds: sample(n) -> random permutation of 1, 2,..,n
+  fold size = total observation / 10 
+  a. have last fold = bigger 
+2. for kth fold: training df = not kth fold  
+  a. fit model on all data except kth fold 
+  b. predict y for kth fold: error, specificity, sensitive (on kth fold) 
+
+```{r}
+storage <- as.data.frame(matrix(nrow = 10, ncol = 3))
+n <- 12873
+idx <- sample(n)
+fold_size <- floor(n / 10)
+for (i in 1:10) {
+  # start and end positions of index vector for ith fold
+  start_position <- (i - 1) * fold_size + 1
+  end_position <- i * fold_size
+  if (i == 10) {
+    end_position <- n
+  }
+  # test indices (indices for ith fold)
+  test_ind <- idx[start_position:end_position]
+  
+  # training indices (all indices not in ith fold)
+  train_ind <- (1:n)[-test_ind]
+  
+  # fit model on all data except ith fold
+  glm.fit_Train <- glm(y ~ ., data = df, subset = train_ind, family = binomial)
+  
+  # predict on ith fold
+  pi_hat <- predict(glm.fit_Train, df[test_ind, ], type = "response")
+  y_hat <- as.numeric(pi_hat > 0.5)
+  
+  # compute accuracy rates
+  cmat <- table("Truth" = df[test_ind, "y"],
+                "Pred" = y_hat)
+  acc <- c("Overall" = sum(diag(cmat)) / sum(cmat), # Overall accuracy
+           "Specificity" = cmat[1, 1] / sum(cmat[1, ]), # Specificity
+           "Sensitivity" = cmat[2, 2] / sum(cmat[2, ])  # Sensitivity
+  )
+  storage[i, ] <- round(acc, 3)
+  
+}
+names(storage) <- c("Overall Accuracy", "Specificity", "Sensitivity")
+```
+
+
+3. average error, specificity, sensitivity 
+```{r}
+cv_acc <- colMeans(storage)
+names(cv_acc) <- c("Overall", "Specificity", "Sensitivity")
+cv_acc
+```
+
+
